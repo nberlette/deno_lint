@@ -62,20 +62,6 @@ impl Handler for NoThrowLiteralHandler {
           }],
         );
       }
-      Expr::Unary(unary) if unary.op().as_str() == "void" => ctx
-        .add_diagnostic_with_fixes(
-          throw_stmt.range(),
-          CODE,
-          NoThrowLiteralMessage::Undefined,
-          Some(HINT.to_string()),
-          vec![LintFix {
-            description: FIX_DESC_UNDEFINED.into(),
-            changes: vec![LintFixChange {
-              range: unary.range(),
-              new_text: format!("new Error({})", unary.text()).into(),
-            }],
-          }],
-        ),
       Expr::Lit(lit) => ctx.add_diagnostic_with_fixes(
         throw_stmt.range(),
         CODE,
@@ -100,6 +86,20 @@ impl Handler for NoThrowLiteralHandler {
           }],
         }],
       ),
+      Expr::Unary(unary) if unary.op().as_str() == "void" => ctx
+        .add_diagnostic_with_fixes(
+          throw_stmt.range(),
+          CODE,
+          NoThrowLiteralMessage::Undefined,
+          Some(HINT.to_string()),
+          vec![LintFix {
+            description: FIX_DESC_UNDEFINED.into(),
+            changes: vec![LintFixChange {
+              range: unary.range(),
+              new_text: "new Error()".into(),
+            }],
+          }],
+        ),
       Expr::Ident(ident) if *ident.sym() == *"undefined" => {
         ctx.add_diagnostic_with_fixes(
           throw_stmt.range(),
@@ -133,10 +133,48 @@ mod tests {
   }
 
   #[test]
+  fn no_throw_literal_tagged_template_literals_valid() {
+    assert_lint_ok! {
+      NoThrowLiteral, r#"throw err`kumiko`"#,
+    }
+  }
+
+  #[test]
+  fn no_throw_literal_preserve_quotes_invalid() {
+    assert_lint_err! {
+      NoThrowLiteral,
+      r#"throw "kumiko""#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::ErrObjectExpected,
+        fix: (FIX_DESC, r#"throw new Error("kumiko")"#),
+      }],
+      r#"throw 'kumiko'"#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::ErrObjectExpected,
+        fix: (FIX_DESC, r#"throw new Error('kumiko')"#),
+      }],
+      r#"throw `kumiko`"#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::ErrObjectExpected,
+        fix: (FIX_DESC, r#"throw new Error(`kumiko`)"#),
+      }],
+    }
+  }
+
+  #[test]
   fn no_throw_literal_invalid() {
     assert_lint_err! {
       NoThrowLiteral,
       r#"throw 'kumiko'"#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::ErrObjectExpected,
+        fix: (FIX_DESC, r#"throw new Error('kumiko')"#),
+      }],
+      r#"throw "kumiko""#: [
       {
         col: 0,
         message: NoThrowLiteralMessage::ErrObjectExpected,
@@ -161,6 +199,18 @@ mod tests {
         fix: (FIX_DESC, r#"throw new Error("null")"#),
       }],
       r#"throw undefined"#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::Undefined,
+        fix: (FIX_DESC_UNDEFINED, "throw new Error()"),
+      }],
+      r#"throw void 0"#: [
+      {
+        col: 0,
+        message: NoThrowLiteralMessage::Undefined,
+        fix: (FIX_DESC_UNDEFINED, "throw new Error()"),
+      }],
+      r#"throw void 1"#: [
       {
         col: 0,
         message: NoThrowLiteralMessage::Undefined,
