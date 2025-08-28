@@ -2,6 +2,7 @@
 
 use super::program_ref;
 use super::{Context, LintRule};
+use crate::diagnostic::{LintFix, LintFixChange};
 use crate::tags::{self, Tags};
 use crate::Program;
 use crate::ProgramRef;
@@ -42,15 +43,20 @@ enum NoUnusedVarsMessage {
 #[derive(Display)]
 enum NoUnusedVarsHint {
   #[display(
-    fmt = "If this is intentional, prefix it with an underscore like `_{}`",
-    _0
+    fmt = "If this is intentional, prefix it with an underscore like `_{_0}`"
   )]
   AddPrefix(String),
   #[display(
-    fmt = "If this is intentional, alias it with an underscore like `{} as _{}`",
-    _0,
-    _0
+    fmt = "If this is intentional, alias it with an underscore like `{_0} as _{_0}`"
   )]
+  Alias(String),
+}
+
+#[derive(Display)]
+enum NoUnusedVarsFix {
+  #[display(fmt = "Prefix unused identifier `{_0}` with `_`")]
+  Prefix(String),
+  #[display(fmt = "Alias unused import `{_0}` as `_{_0}`")]
   Alias(String),
 }
 
@@ -518,6 +524,47 @@ impl IdentKind<'_> {
       | IdentKind::Other(_) => NoUnusedVarsHint::AddPrefix(symbol),
     }
   }
+
+  fn to_fixes(self) -> Vec<LintFix> {
+    let ident = self.inner();
+    let symbol = ident.sym.to_string();
+    let new_ident = ident.with_prefix("_");
+    let new_symbol = new_ident.sym.to_string();
+    let changes = match self {
+      IdentKind::NamedImport(_) => {
+        vec![LintFixChange {
+          range: ident.range(),
+          new_text: format!("{symbol} as {new_symbol}").into(),
+        }]
+      }
+      IdentKind::DefaultImport(_)
+      | IdentKind::StarAsImport(_)
+      | IdentKind::Other(_) => {
+        vec![LintFixChange {
+          range: ident.range(),
+          new_text: new_symbol.into(),
+        }]
+      }
+    };
+
+    if changes.is_empty() {
+      vec![]
+    } else {
+      let description = match self {
+        IdentKind::NamedImport(_) => NoUnusedVarsFix::Alias(symbol).to_string(),
+        IdentKind::DefaultImport(_)
+        | IdentKind::StarAsImport(_)
+        | IdentKind::Other(_) => NoUnusedVarsFix::Prefix(symbol).to_string(),
+      };
+
+      let description = description.into();
+
+      vec![LintFix {
+        description,
+        changes,
+      }]
+    }
+  }
 }
 
 impl NoUnusedVarVisitor<'_, '_> {
@@ -529,11 +576,12 @@ impl NoUnusedVarVisitor<'_, '_> {
 
     if !self.used_vars.contains(&inner.to_id()) {
       // The variable is not used.
-      self.context.add_diagnostic_with_hint(
+      self.context.add_diagnostic_with_fixes(
         inner.range(),
         CODE,
         ident.to_message(),
-        ident.to_hint(),
+        Some(ident.to_hint().to_string()),
+        ident.to_fixes(),
       );
     }
   }
