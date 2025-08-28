@@ -8,6 +8,7 @@ use deno_ast::view::ImportDecl;
 use deno_ast::{ModuleSpecifier, SourceRanged};
 use derive_more::Display;
 use std::ffi::OsStr;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct NoExternalImport;
@@ -51,10 +52,11 @@ struct NoExternalImportHandler;
 impl NoExternalImportHandler {
   fn check_import_path(&self, decl: &ImportDecl, ctx: &mut Context) {
     let parsed_src = ModuleSpecifier::parse(decl.src.value());
-    let maybe_file_path = ctx.specifier().to_file_path().ok();
-    let file_stem = maybe_file_path
-      .as_ref()
-      .and_then(|p| p.file_stem())
+    let file_stem = ctx
+      .specifier()
+      .path_segments()
+      .and_then(|mut s| s.next_back())
+      .and_then(|filename| Path::new(filename).file_stem())
       .and_then(OsStr::to_str);
 
     if parsed_src.is_ok() && file_stem != Some("deps") {
